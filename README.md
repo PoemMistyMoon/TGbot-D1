@@ -43,7 +43,7 @@
 
 4.  进入您创建的 D1 数据库，点击 **浏览数据**。
 
-5.  点击 **创建表**，创建以下两个表（或使用 SQL 模式）：
+5.  点击 **D1的控制台界面，有一个执行步骤，将下面三段执行语句复制到执行窗口，点击执行即可，会弹出响应时间即为部署成功**：
 
     | 表名 | 字段 (Schema) |
     | :--- | :--- |
@@ -78,8 +78,8 @@
 | 变量名称 | 值（示例） | 说明 |
 | :--- | :--- | :--- |
 | `BOT_TOKEN` | `123456:AABBCCDDEEFFGGHHIIJJKKLLMMNNOOPP` | 您的 Telegram Bot Token。 |
-| `ADMIN_IDS` | `12345678, 87654321` | 管理员的 Telegram 用户 ID，**多个 ID 用英文逗号分隔**。 |
-| `ADMIN_GROUP_ID` | `-1001234567890` | 用于接收用户消息的**群组 ID**（注意：必须是超级群组，且已开启话题功能）。 |
+| `ADMIN_IDS` | `12345678, 87654321` | 管理员的 Telegram 用户 ID，**多个 ID 用英文逗号分隔！注意注意注意是用户的ID，不是用户名也不是昵称**。 |
+| `ADMIN_GROUP_ID` | `-1001234567890` | 用于接收用户消息的**群组 ID**（注意：必须是群组，且已开启话题功能，普通群组和话题群组的ID不一样）。 |
 
 3.  点击 **保存并部署**。
 
@@ -89,13 +89,9 @@
 
 ```
 https://api.telegram.org/bot<您的BOT_TOKEN>/setWebhook?url=<您的Worker服务URL>
+
+示例https://api.telegram.org/bot112223333444:AAE5HI-vbxmidWhdbVVuvTO-5556666777/setWebhook?url=https://tgbot.xxxxxx.worker/
 ```
-
-**示例：**
-
-1.  Worker 服务 URL 在 Worker 概览页可以看到，例如：`https://telegram-forwarder.<您的子域名>.workers.dev`。
-2.  在浏览器中访问：`https://api.telegram.org/bot123456:AABBCCDDEEFFGGHHIIJJKKLLMMNNOOPP/setWebhook?url=https://telegram-forwarder.username.workers.dev`
-
 如果返回 `{"ok":true,"result":true,"description":"Webhook was set"}`，则表示部署成功。
 
 **现在，管理员私聊 Bot 发送 `/start` 即可进入配置菜单。**
