@@ -328,41 +328,7 @@ async function dbConfigGet(key, env) {
     };
   }
   
-  /**
-  * [新增] 更新用户资料卡按钮状态
-  */
-  async function updateUserInfoCardButtons(userId, topicId, isBlocked, env) {
-    try {
-        // 查找话题中的资料卡消息（通常包含用户资料卡的消息）
-        // 这里需要根据实际情况调整，可能需要存储资料卡消息ID
-        
-        // 方法1：尝试查找最近发送的包含用户资料的消息
-        const messages = await telegramApi(env.BOT_TOKEN, "getForumTopicMessages", {
-            chat_id: env.ADMIN_GROUP_ID,
-            message_thread_id: topicId,
-            limit: 10 // 获取最近10条消息
-        });
-        
-        // 查找包含用户资料卡的消息
-        const cardMessage = messages.find(msg => 
-            msg.text && msg.text.includes("👤 用户资料卡") && msg.text.includes(userId)
-        );
-        
-        if (cardMessage) {
-            // 更新按钮状态
-            const newMarkup = getInfoCardButtons(userId, isBlocked);
-            await telegramApi(env.BOT_TOKEN, "editMessageReplyMarkup", {
-                chat_id: env.ADMIN_GROUP_ID,
-                message_id: cardMessage.message_id,
-                reply_markup: newMarkup,
-            });
-        }
-    } catch (e) {
-        console.error("Failed to update user info card buttons:", e.message);
-        // 静默失败，不影响主要功能
-    }
-  }
-  
+
   /**
   * 获取消息类型的描述
   */
@@ -564,11 +530,23 @@ async function dbConfigGet(key, env) {
   
   async function handleUpdate(update, env) {
     if (update.message) {
-        if (update.message.chat.type === "private") {
-            await handlePrivateMessage(update.message, env);
+        const message = update.message;
+        
+        // 检查是否在管理员群组中
+        if (message.chat.id.toString() === env.ADMIN_GROUP_ID) {
+            // 检查是否是 /block 或 /unblock 命令 - 在管理员群组的任何地方都支持
+            if (message.text && (message.text.startsWith('/block') || message.text.startsWith('/unblock'))) {
+                await handleBlockUnblockCommand(message, env);
+                return;
+            }
         }
-        else if (update.message.chat.id.toString() === env.ADMIN_GROUP_ID) {
-            await handleAdminReply(update.message, env);
+        
+        // 其他消息处理逻辑保持不变
+        if (message.chat.type === "private") {
+            await handlePrivateMessage(message, env);
+        }
+        else if (message.chat.id.toString() === env.ADMIN_GROUP_ID) {
+            await handleAdminReply(message, env);
         }
     } else if (update.edited_message) {
         if (update.edited_message.chat.type === "private") {
@@ -577,7 +555,8 @@ async function dbConfigGet(key, env) {
     } else if (update.callback_query) {
         await handleCallbackQuery(update.callback_query, env);
     } 
-  }
+}
+
   
   async function handlePrivateMessage(message, env) {
     const chatId = message.chat.id.toString();
@@ -1720,10 +1699,10 @@ async function dbConfigGet(key, env) {
     }
   }
   
-  /**
-  * 处理置顶资料卡消息的操作。
-  */
-  async function handlePinCard(callbackQuery, message, env) {
+/**
+* 处理置顶资料卡消息的操作。
+*/
+async function handlePinCard(callbackQuery, message, env) {
     const topicId = message.message_thread_id; 
     const adminGroupId = message.chat.id;
     const messageIdToPin = message.message_id; 
@@ -1754,7 +1733,6 @@ async function dbConfigGet(key, env) {
         });
     }
   }
-  
   /**
   * 处理内联按钮的回调查询。
   */
@@ -1992,12 +1970,12 @@ async function handleBlockUser(userId, message, env) {
     }
   }
   
-  /**
-  * [新增] 处理 /block 和 /unblock 命令
-  */
-  async function handleBlockUnblockCommand(message, env) {
-    const text = message.text;
-    const topicId = message.message_thread_id.toString();
+/**
+* [新增] 处理 /block 和 /unblock 命令 - 支持话题内和直接ID两种方式
+*/
+async function handleBlockUnblockCommand(message, env) {
+    const text = message.text.trim();
+    const topicId = message.message_thread_id ? message.message_thread_id.toString() : null;
     const adminId = message.from.id.toString();
     
     // 检查发送者是否有权限
@@ -2006,87 +1984,141 @@ async function handleBlockUser(userId, message, env) {
         return; // 静默忽略，不提示
     }
     
-    // 根据 topic_id 查找对应的用户ID
-    const userId = await dbTopicUserGet(topicId, env);
-    if (!userId) {
-        try {
-            await telegramApi(env.BOT_TOKEN, "sendMessage", {
-                chat_id: message.chat.id,
-                text: "❌ 无法找到该话题对应的用户。",
-                message_thread_id: topicId,
-                disable_notification: true
-            });
-        } catch (e) {
-            console.error("Failed to send error message for user not found:", e.message);
-        }
+    // 解析命令：支持 "/block" 和 "/block 123456789" 两种格式
+    const commandMatch = text.match(/^(\/block|\/unblock)(?:\s+(\d+))?$/);
+    if (!commandMatch) {
+        // 命令格式不正确，忽略
         return;
     }
     
+    const command = commandMatch[1]; // "/block" 或 "/unblock"
+    const directUserId = commandMatch[2]; // 直接提供的用户ID（可选）
+    
+    let userId = null;
+    let userName = null;
+    
     try {
-        // 获取用户信息
-        const userData = await dbUserGetOrCreate(userId, env);
-        const userName = userData.user_info ? userData.user_info.name : `User ${userId}`;
-        const isCurrentlyBlocked = userData.is_blocked;
-        
-        // 处理 /block 命令
-        if (text === "/block") {
-            if (isCurrentlyBlocked) {
-                // 用户已经被封禁，不显示重复操作提示，静默退出
-                return;
-            } else {
-                // 执行封禁
-                await dbUserUpdate(userId, { is_blocked: true }, env);
-                
-                // 同步更新资料卡按钮状态
-                await updateUserInfoCardButtons(userId, topicId, true, env);
-                
-                // 发送确认消息 - 统一格式
+        // 情况1：直接提供了用户ID
+        if (directUserId) {
+            userId = directUserId;
+            const userData = await dbUserGetOrCreate(userId, env);
+            userName = userData.user_info ? userData.user_info.name : `User ${userId}`;
+        }
+        // 情况2：在话题中，根据话题ID查找用户
+        else if (topicId) {
+            userId = await dbTopicUserGet(topicId, env);
+            if (!userId) {
                 await telegramApi(env.BOT_TOKEN, "sendMessage", {
                     chat_id: message.chat.id,
-                    text: `❌ 用户 ${userName} 已被屏蔽。\n机器人将不再接收此人消息。`,
+                    text: "❌ 无法找到该话题对应的用户。",
                     message_thread_id: topicId,
                     disable_notification: true
                 });
+                return;
+            }
+            const userData = await dbUserGetOrCreate(userId, env);
+            userName = userData.user_info ? userData.user_info.name : `User ${userId}`;
+        }
+        // 情况3：既没有直接提供ID，也不在话题中
+        else {
+            await telegramApi(env.BOT_TOKEN, "sendMessage", {
+                chat_id: message.chat.id,
+                text: "❌ 请指定用户ID：\n/block 123456789\n或在用户话题中使用 /block",
+                disable_notification: true
+            });
+            return;
+        }
+        
+        // 获取用户当前状态
+        const userData = await dbUserGetOrCreate(userId, env);
+        const isCurrentlyBlocked = userData.is_blocked;
+        
+        let successMessage = "";
+        let targetState = null;
+        
+        // 处理 /block 命令
+        if (command === "/block") {
+            if (isCurrentlyBlocked) {
+                successMessage = `❌ 用户 ${userName} 已被封禁。\n机器人将不再接收此人消息。`;
+            } else {
+                targetState = true;
+                successMessage = `❌ 用户 ${userName} 已被屏蔽。\n机器人将不再接收此人消息。`;
             }
         }
         // 处理 /unblock 命令
-        else if (text === "/unblock") {
+        else if (command === "/unblock") {
             if (!isCurrentlyBlocked) {
-                // 用户未被封禁，不显示重复操作提示，静默退出
-                return;
+                successMessage = `✅ 用户 ${userName} 未被封禁。\n机器人现在可以正常接收此消息。`;
             } else {
-                // 执行解封
+                targetState = false;
+                successMessage = `✅ 用户 ${userName} 已解除屏蔽。\n机器人现在可以正常接收此消息。`;
+            }
+        }
+        
+        // 如果需要改变状态，先更新数据库
+        if (targetState !== null) {
+            if (targetState) {
+                await dbUserUpdate(userId, { is_blocked: true }, env);
+            } else {
                 await dbUserUpdate(userId, { is_blocked: false, block_count: 0 }, env);
+            }
+        }
+        
+        // 尝试更新按钮（如果是话题中的命令）
+        if (topicId && !directUserId) {
+            try {
+                const callbackData = command === "/block" ? `block:${userId}` : `unblock:${userId}`;
+                const mockCallbackQuery = {
+                    id: "mock_" + Date.now(),
+                    data: callbackData,
+                    message: {
+                        chat: { id: env.ADMIN_GROUP_ID },
+                        message_id: message.message_id,
+                        message_thread_id: topicId
+                    }
+                };
                 
-                // 同步更新资料卡按钮状态
-                await updateUserInfoCardButtons(userId, topicId, false, env);
+                // 尝试调用 handleCallbackQuery
+                await handleCallbackQuery(mockCallbackQuery, env);
                 
-                // 发送确认消息 - 统一格式
+            } catch (buttonError) {
+                // 如果按钮更新失败（消息被删除等），只发送成功消息
+                console.warn("Button update failed, but database operation succeeded:", buttonError.message);
+                
+                // 发送成功消息
                 await telegramApi(env.BOT_TOKEN, "sendMessage", {
                     chat_id: message.chat.id,
-                    text: `✅ 用户 ${userName} 已解除屏蔽。\n机器人现在可以正常接收此消息。`,
+                    text: successMessage,
                     message_thread_id: topicId,
                     disable_notification: true
                 });
             }
+        } else {
+            // 直接ID命令或在通用话题中，直接发送成功消息
+            await telegramApi(env.BOT_TOKEN, "sendMessage", {
+                chat_id: message.chat.id,
+                text: successMessage,
+                message_thread_id: topicId,
+                disable_notification: true
+            });
         }
         
     } catch (e) {
-        console.error(`Failed to execute ${text} command:`, e.message);
+        console.error(`Failed to execute ${command} command:`, e.message);
         // 向管理员显示错误
         await telegramApi(env.BOT_TOKEN, "sendMessage", {
             chat_id: message.chat.id,
-            text: `❌ 执行 ${text} 命令时发生错误：${e.message}`,
+            text: `❌ 执行 ${command} 命令时发生错误：${e.message}`,
             message_thread_id: topicId,
             disable_notification: true
         });
     }
   }
   
-  /**
+/**
   * 将管理员在话题中的回复转发回用户。
   */
-  async function handleAdminReply(message, env) {
+async function handleAdminReply(message, env) {
     // 检查是否是话题内的消息
     if (!message.is_topic_message || !message.message_thread_id) return;
   
@@ -2107,12 +2139,8 @@ async function handleBlockUser(userId, message, env) {
         return; 
     }
   
-    // [新增] 检查是否是 /block 或 /unblock 命令
-    const text = message.text || "";
-    if (text === "/block" || text === "/unblock") {
-        await handleBlockUnblockCommand(message, env);
-        return;
-    }
+    // 注意：/block 和 /unblock 命令处理已移到 handleUpdate 函数中统一处理
+    // 这里不再需要检查命令，直接处理回复转发
   
     const topicId = message.message_thread_id.toString();
     // 从 D1 根据 topic_id 查找 user_id
@@ -2204,4 +2232,3 @@ async function handleBlockUser(userId, message, env) {
         }
     }
   }
-  
