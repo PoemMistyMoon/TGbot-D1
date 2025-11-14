@@ -529,17 +529,8 @@ async function telegramApi(token, methodName, params = {}) {
 
 export default {
   async fetch(request, env, ctx) {
-      // 检查是否是定时任务触发器
-      if (request.url.includes('/scheduled')) {
-          try {
-              await performScheduledCleanup(env);
-              return new Response("Cleanup completed successfully");
-          } catch (e) {
-              console.error("Scheduled cleanup failed:", e);
-              return new Response(`Cleanup failed: ${e.message}`, { status: 500 });
-          }
-      }
-
+      // 移除了定时任务触发检查，因为现在使用 Cron 触发器
+      
       // 关键修正：在处理任何请求之前，先运行数据库迁移，确保表结构存在。
       try {
             await dbMigrate(env);
@@ -559,6 +550,18 @@ export default {
       }
       return new Response("OK");
   },
+  
+  // 新增：scheduled 事件处理程序（专门处理定时任务）
+  async scheduled(event, env, ctx) {
+      console.log("开始执行定时清理任务...");
+      
+      try {
+          await performScheduledCleanup(env);
+          console.log("定时清理任务完成");
+      } catch (e) {
+          console.error("定时清理任务失败:", e);
+      }
+  }
 };
 
 async function handleUpdate(update, env) {
