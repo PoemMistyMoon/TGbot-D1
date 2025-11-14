@@ -1912,10 +1912,10 @@ async function dbConfigGet(key, env) {
     }
   }
   
-  /**
-  * 屏蔽用户。
-  */
-  async function handleBlockUser(userId, message, env) {
+/**
+* 屏蔽用户。
+*/
+async function handleBlockUser(userId, message, env) {
     try {
         // 设置 D1 中 is_blocked 为 true
         await dbUserUpdate(userId, { is_blocked: true }, env);
@@ -1932,13 +1932,12 @@ async function dbConfigGet(key, env) {
             reply_markup: newMarkup,
         });
         
-        // 2. 发送确认消息
-        const confirmation = `❌ **用户 [${userName}] 已被屏蔽。**\n机器人将不再接收此人消息。`;
+        // 2. 发送确认消息 - 统一格式
+        const confirmation = `❌ 用户 ${userName} 已被屏蔽。\n机器人将不再接收此人消息。`;
         await telegramApi(env.BOT_TOKEN, "sendMessage", {
             chat_id: message.chat.id,
             text: confirmation,
             message_thread_id: message.message_thread_id,
-            parse_mode: "Markdown",
         });
         
     } catch (e) {
@@ -1973,13 +1972,12 @@ async function dbConfigGet(key, env) {
             reply_markup: newMarkup,
         });
   
-        // 2. 发送确认消息
-        const confirmation = `✅ **用户 [${userName}] 已解除屏蔽。**\n机器人现在可以正常接收其消息。`;
+        // 2. 发送确认消息 - 统一格式
+        const confirmation = `✅ 用户 ${userName} 已解除屏蔽。\n机器人现在可以正常接收此消息。`;
         await telegramApi(env.BOT_TOKEN, "sendMessage", {
             chat_id: message.chat.id,
             text: confirmation,
             message_thread_id: message.message_thread_id,
-            parse_mode: "Markdown",
         });
   
     } catch (e) {
@@ -1989,6 +1987,97 @@ async function dbConfigGet(key, env) {
             chat_id: message.chat.id,
             text: `❌ 解除屏蔽操作失败：${e.message}`,
             message_thread_id: message.message_thread_id,
+            disable_notification: true
+        });
+    }
+  }
+  
+  /**
+  * [新增] 处理 /block 和 /unblock 命令
+  */
+  async function handleBlockUnblockCommand(message, env) {
+    const text = message.text;
+    const topicId = message.message_thread_id.toString();
+    const adminId = message.from.id.toString();
+    
+    // 检查发送者是否有权限
+    const isAdmin = await isAdminUser(adminId, env);
+    if (!isAdmin) {
+        return; // 静默忽略，不提示
+    }
+    
+    // 根据 topic_id 查找对应的用户ID
+    const userId = await dbTopicUserGet(topicId, env);
+    if (!userId) {
+        try {
+            await telegramApi(env.BOT_TOKEN, "sendMessage", {
+                chat_id: message.chat.id,
+                text: "❌ 无法找到该话题对应的用户。",
+                message_thread_id: topicId,
+                disable_notification: true
+            });
+        } catch (e) {
+            console.error("Failed to send error message for user not found:", e.message);
+        }
+        return;
+    }
+    
+    try {
+        // 获取用户信息
+        const userData = await dbUserGetOrCreate(userId, env);
+        const userName = userData.user_info ? userData.user_info.name : `User ${userId}`;
+        const isCurrentlyBlocked = userData.is_blocked;
+        
+        // 处理 /block 命令
+        if (text === "/block") {
+            if (isCurrentlyBlocked) {
+                // 用户已经被封禁，不显示重复操作提示，静默退出
+                return;
+            } else {
+                // 执行封禁
+                await dbUserUpdate(userId, { is_blocked: true }, env);
+                
+                // 同步更新资料卡按钮状态
+                await updateUserInfoCardButtons(userId, topicId, true, env);
+                
+                // 发送确认消息 - 统一格式
+                await telegramApi(env.BOT_TOKEN, "sendMessage", {
+                    chat_id: message.chat.id,
+                    text: `❌ 用户 ${userName} 已被屏蔽。\n机器人将不再接收此人消息。`,
+                    message_thread_id: topicId,
+                    disable_notification: true
+                });
+            }
+        }
+        // 处理 /unblock 命令
+        else if (text === "/unblock") {
+            if (!isCurrentlyBlocked) {
+                // 用户未被封禁，不显示重复操作提示，静默退出
+                return;
+            } else {
+                // 执行解封
+                await dbUserUpdate(userId, { is_blocked: false, block_count: 0 }, env);
+                
+                // 同步更新资料卡按钮状态
+                await updateUserInfoCardButtons(userId, topicId, false, env);
+                
+                // 发送确认消息 - 统一格式
+                await telegramApi(env.BOT_TOKEN, "sendMessage", {
+                    chat_id: message.chat.id,
+                    text: `✅ 用户 ${userName} 已解除屏蔽。\n机器人现在可以正常接收此消息。`,
+                    message_thread_id: topicId,
+                    disable_notification: true
+                });
+            }
+        }
+        
+    } catch (e) {
+        console.error(`Failed to execute ${text} command:`, e.message);
+        // 向管理员显示错误
+        await telegramApi(env.BOT_TOKEN, "sendMessage", {
+            chat_id: message.chat.id,
+            text: `❌ 执行 ${text} 命令时发生错误：${e.message}`,
+            message_thread_id: topicId,
             disable_notification: true
         });
     }
@@ -2113,103 +2202,6 @@ async function dbConfigGet(key, env) {
                 disable_notification: true
             });
         }
-    }
-  }
-  
-  /**
-  * [新增] 处理 /block 和 /unblock 命令
-  */
-  async function handleBlockUnblockCommand(message, env) {
-    const text = message.text;
-    const topicId = message.message_thread_id.toString();
-    const adminId = message.from.id.toString();
-    
-    // 检查发送者是否有权限
-    const isAdmin = await isAdminUser(adminId, env);
-    if (!isAdmin) {
-        return; // 静默忽略，不提示
-    }
-    
-    // 根据 topic_id 查找对应的用户ID
-    const userId = await dbTopicUserGet(topicId, env);
-    if (!userId) {
-        try {
-            await telegramApi(env.BOT_TOKEN, "sendMessage", {
-                chat_id: message.chat.id,
-                text: "❌ 无法找到该话题对应的用户。",
-                message_thread_id: topicId,
-                disable_notification: true
-            });
-        } catch (e) {
-            console.error("Failed to send error message for user not found:", e.message);
-        }
-        return;
-    }
-    
-    try {
-        // 获取用户信息
-        const userData = await dbUserGetOrCreate(userId, env);
-        const userName = userData.user_info ? userData.user_info.name : `User ${userId}`;
-        const isCurrentlyBlocked = userData.is_blocked;
-        
-        // 处理 /block 命令
-        if (text === "/block") {
-            if (isCurrentlyBlocked) {
-                // 用户已经被封禁，显示重复操作提示
-                await telegramApi(env.BOT_TOKEN, "sendMessage", {
-                    chat_id: message.chat.id,
-                    text: `⚠️ 用户 [${userName}] 已经被封禁，无需重复操作。`,
-                    message_thread_id: topicId,
-                    disable_notification: true
-                });
-            } else {
-                // 执行封禁
-                await dbUserUpdate(userId, { is_blocked: true }, env);
-                await telegramApi(env.BOT_TOKEN, "sendMessage", {
-                    chat_id: message.chat.id,
-                    text: `✅ 用户 [${userName}] 已被封禁。机器人将不再接收此人的消息。`,
-                    message_thread_id: topicId,
-                    disable_notification: true
-                });
-                
-                // 同步更新资料卡按钮状态
-                await updateUserInfoCardButtons(userId, topicId, true, env);
-            }
-        }
-        // 处理 /unblock 命令
-        else if (text === "/unblock") {
-            if (!isCurrentlyBlocked) {
-                // 用户未被封禁，显示重复操作提示
-                await telegramApi(env.BOT_TOKEN, "sendMessage", {
-                    chat_id: message.chat.id,
-                    text: `⚠️ 用户 [${userName}] 未被封禁，无需解封操作。`,
-                    message_thread_id: topicId,
-                    disable_notification: true
-                });
-            } else {
-                // 执行解封
-                await dbUserUpdate(userId, { is_blocked: false, block_count: 0 }, env);
-                await telegramApi(env.BOT_TOKEN, "sendMessage", {
-                    chat_id: message.chat.id,
-                    text: `✅ 用户 [${userName}] 已被解封。机器人现在可以正常接收此人的消息。`,
-                    message_thread_id: topicId,
-                    disable_notification: true
-                });
-                
-                // 同步更新资料卡按钮状态
-                await updateUserInfoCardButtons(userId, topicId, false, env);
-            }
-        }
-        
-    } catch (e) {
-        console.error(`Failed to execute ${text} command:`, e.message);
-        // 向管理员显示错误
-        await telegramApi(env.BOT_TOKEN, "sendMessage", {
-            chat_id: message.chat.id,
-            text: `❌ 执行 ${text} 命令时发生错误：${e.message}`,
-            message_thread_id: topicId,
-            disable_notification: true
-        });
     }
   }
   
