@@ -236,42 +236,25 @@ async function dbConfigGet(key, env) {
     }
   }
   
-  /**
-  * 执行定时清理任务
-  */
-  async function performScheduledCleanup(env) {
+/**
+* 执行定时清理任务 - 静默执行，不发送任何通知
+*/
+async function performScheduledCleanup(env) {
     console.log("Starting scheduled cleanup tasks...");
     
-    const messagesCleaned = await cleanupOldMessages(env);
-    const usersCleaned = await cleanupUnverifiedUsers(env);
-    
-    // 通知主管理员清理结果
-    const adminIds = env.ADMIN_IDS ? env.ADMIN_IDS.split(',').map(id => id.trim()) : [];
-    const cleanupReport = `
-  🧹 <b>定时清理任务完成</b>
-  
-  📊 <b>清理统计：</b>
-  • 清理的旧消息：${messagesCleaned} 条（超过30天）
-  • 清理的未验证用户：${usersCleaned} 个
-  
-  ⏰ <b>执行时间：</b>${new Date().toLocaleString('zh-CN')}
-    `.trim();
-    
-    for (const adminId of adminIds) {
-        try {
-            await telegramApi(env.BOT_TOKEN, "sendMessage", {
-                chat_id: adminId,
-                text: cleanupReport,
-                parse_mode: "HTML"
-            });
-        } catch (e) {
-            console.error(`Failed to send cleanup report to admin ${adminId}:`, e);
-        }
+    try {
+        // 静默清理超过30天的聊天记录
+        await cleanupOldMessages(env);
+        
+        // 静默清理所有未验证用户
+        await cleanupUnverifiedUsers(env);
+        
+        console.log("Scheduled cleanup tasks completed");
+    } catch (e) {
+        console.error("Scheduled cleanup tasks failed:", e);
     }
-    
-    console.log("Scheduled cleanup tasks completed");
-  }
-  
+}
+
   // --- 辅助函数 ---
   
   function escapeHtml(text) {
